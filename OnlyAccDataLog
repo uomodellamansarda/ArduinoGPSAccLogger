@@ -1,0 +1,113 @@
+//Codice scrittura solo dati accelerometro
+//sostituiamo con i micros() i millis()
+
+#include <SPI.h>
+#include <SdFat.h>
+
+#include <Wire.h>
+
+#define SerialMonitor Serial
+
+
+#define ARDUINO_USD_CS 10 // uSD card CS pin (pin 10 on SparkFun GPS Logger Shield)
+
+#define MAX_LOG_FILES 100 // Number of log files that can be made
+char logFileName[13] = "gpslogXX.csv";
+
+// Data to be logged:
+#define LOG_COLUMN_COUNT 7
+
+#define LOG_COLUMN_HEADER \
+  "time," "Acc.X," "Acc.Y," "Acc.Z," "Gy.X," "Gy.Y," "Gy.Z"
+
+#define LOG_RATE 1000 // Log every n microseconds
+unsigned long lastLog = 0; // Global var to keep of last time we logged
+
+const int MPU=0x68;  // I2C address of the MPU-6050
+int16_t AcX,AcY,AcZ,GyX,GyY,GyZ;
+
+
+  // SD definition
+  SdFat SD;
+  File  dataFile;
+
+  void setup()
+  {
+    Wire.begin();
+    Wire.beginTransmission(MPU);
+    Wire.write(0x6B);  // PWR_MGMT_1 register
+    Wire.write(0);     // set to zero (wakes up the MPU-6050)
+    Wire.endTransmission(true);
+    SerialMonitor.begin(9600);
+
+    updateFileName(); // Each time we start, create a new file, increment the number
+     // see if the card is present and can be initialized:
+     if (!SD.begin(ARDUINO_USD_CS))
+   {
+    SerialMonitor.println( F("Error initializing SD card.") );
+    } else {
+    dataFile = SD.open( logFileName, FILE_WRITE );
+    // Print a header at the top of the new file
+    dataFile.println( F(LOG_COLUMN_HEADER) );
+  }
+
+}
+
+  void loop()
+  {
+    Wire.beginTransmission(MPU);
+    Wire.write(0x3B);  // starting with register 0x3B (ACCEL_XOUT_H)
+    Wire.endTransmission(false);
+    Wire.requestFrom(MPU,14,true);   // request a total of 14 registers
+    AcX=Wire.read()<<8;
+    AcX|= Wire.read(); // 0x3B (ACCEL_XOUT_H) & 0x3C (ACCEL_XOUT_L)     
+    AcY=Wire.read()<<8;
+    AcY|=Wire.read();  // 0x3D (ACCEL_YOUT_H) & 0x3E (ACCEL_YOUT_L)
+    AcZ=Wire.read()<<8;
+    AcZ|=Wire.read();  // 0x3F (ACCEL_ZOUT_H) & 0x40 (ACCEL_ZOUT_L)
+    GyX=Wire.read()<<8;
+    GyX|=Wire.read();  // 0x43 (GYRO_XOUT_H) & 0x44 (GYRO_XOUT_L)
+    GyY=Wire.read()<<8 ;
+    GyY|=Wire.read();  // 0x45 (GYRO_YOUT_H) & 0x46 (GYRO_YOUT_L)
+    GyZ=Wire.read()<<8;
+    GyZ|=Wire.read();  // 0x47 (GYRO_ZOUT_H) & 0x48 (GYRO_ZOUT_L)
+    if ((lastLog + LOG_RATE) <= micros()) {
+
+  printImuData(dataFile,lastLog, AcX, AcY, AcZ, GyX, GyY, GyZ);
+  dataFile.flush(); 
+  lastLog=micros();   
+  } 
+  }
+
+static void printImuData(Print &printer, unsigned long lastLog,
+        int16_t AcX, int16_t AcY, int16_t AcZ,
+        int16_t GyX, int16_t GyY, int16_t GyZ)
+{//Printing the mpu6050 information 
+    printer.print(lastLog); printer.print(",");
+    printer.print(AcX);     printer.print(",");
+    printer.print(AcY);     printer.print(",");
+    printer.print(AcZ);     printer.print(",");
+    printer.print(GyX);     printer.print(",");
+    printer.print(GyY);     printer.print(",");
+    printer.println(GyZ);  
+  
+}
+
+// updateFileName() - Looks through the log files already present on a card,
+// and creates a new file with an incremented file index.
+void updateFileName()
+{
+  for (uint8_t i; i < MAX_LOG_FILES; i++)
+  {
+    // Set logFileName to "gpslogXX.csv":
+    logFileName[6] = (i/10) + '0';
+    logFileName[7] = (i%10) + '0';
+ if (!SD.exists(logFileName))
+      break; // We found our index
+
+    SerialMonitor.print(logFileName);
+    SerialMonitor.println( F(" exists") );
+  }
+  SerialMonitor.print( F("File name: ") );
+  SerialMonitor.println(logFileName);
+}
