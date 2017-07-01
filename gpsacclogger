@@ -1,4 +1,5 @@
-
+//Codice scrittura dati accelerometro e gps
+//il file logga purtroppo alla frequenza di un campionamento al secondo
 
 #include <SPI.h>
 #include <SdFat.h>
@@ -88,29 +89,31 @@ int16_t AcX,AcY,AcZ,GyX,GyY,GyZ;
     GyY|=Wire.read();  // 0x45 (GYRO_YOUT_H) & 0x46 (GYRO_YOUT_L)
     GyZ=Wire.read()<<8;
     GyZ|=Wire.read();  // 0x47 (GYRO_ZOUT_H) & 0x48 (GYRO_ZOUT_L)
-    if ((lastLogGPS + LOG_RATE_GPS) <= micros()) {
-    while (gps.available( gpsPort )) {
+  
+  while (gps.available( gpsPort )) {
     fix = gps.read();  // get the entire fix structure, once per second
 
-    if (logGPSData()) { // Log the GPS data
+   
+    if ((lastLogGPS + LOG_RATE_GPS) <= micros()) {
+        if (logGPSData()) { // Log the GPS data
     SerialMonitor.println( F("GPS logged.") ); // Print a debug message
     } else {// If we failed to log GPS
     // Print an error, don't update lastLog
     SerialMonitor.println( F("Failed to log new GPS data.") );
-      }
-    }
-   lastLogGPS=micros();
+        }
+    lastLogGPS=micros();
   }
-  else{ 
+
+    else{ 
     if ((lastLog + LOG_RATE) <= micros()) {
     
       printImuData(dataFile,lastLog, AcX, AcY, AcZ, GyX, GyY, GyZ);
       dataFile.flush(); 
       }
-    lastLog=micros(); 
-    }
+      lastLog=micros(); 
+     }
+   } 
   } 
-  
 
 static void printImuData(Print &printer, unsigned long lastLog,
         int16_t AcX, int16_t AcY, int16_t AcZ,
@@ -225,3 +228,4 @@ void updateFileName()
   SerialMonitor.print( F("File name: ") );
   SerialMonitor.println(logFileName);
 }
+
