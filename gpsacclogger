@@ -1,6 +1,7 @@
 //Codice scrittura dati accelerometro e gps
 //il file logga purtroppo alla frequenza di un campionamento al secondo
 
+//Codice scrittura dati accelerometro e gps
 #include <SPI.h>
 #include <SdFat.h>
 #include <Wire.h>
@@ -12,203 +13,174 @@
 //Definizione delle librerie e oggetti necessarie all'acquisizione dei dati da GPS
 
 
-NMEAGPS gps; // NeoGPS object to be used throughout
-gps_fix fix; // The latest GPS information received from the gpsPort
+NMEAGPS gps;          // NeoGPS object to be used throughout
+gps_fix fix;          // The latest GPS information received from the gpsPort
+bool    newGPSdata;   // true when a new GPS fix needs to be logged
 #define GPS_BAUD 9600 // GPS module's default baud rate
 
 #include <AltSoftSerial.h>
 AltSoftSerial gpsPort; // Always on pins 8 & 9
-#include <SoftwareSerial.h>
 
 #define SerialMonitor Serial
 
-#define ARDUINO_GPS_RX 9 // GPS TX, Arduino RX pin
-#define ARDUINO_GPS_TX 8 // GPS RX, Arduino TX pin
-
-
 #define MAX_LOG_FILES 100 // Number of log files that can be made
-char logFileName[13] = "gpslogXX.csv";
+char logFileName[] = "gpslogXX.csv";
 
 
 #define LOG_COLUMN_HEADER \
   "longitude," "latitude," "altitude," "speed," "course," "date," "time," \
-  "satellites," "LastLog," "Acc.X," "Acc.Y," "Acc.Z," "Gy.X," "Gy.Y," "Gy.Z," 
+  "satellites," "LastLog," "Acc.X," "Acc.Y," "Acc.Z," "Gy.X," "Gy.Y," "Gy.Z,"
 
 #define LOG_RATE 1000         // Log every 1 milliseconds
-#define LOG_RATE_GPS 1000000  //Log every second
 unsigned long lastLog = 0;      // Global var to keep of last time we logged
-unsigned long lastLogGPS = 0;     // Global var to keep of last time we logged
 const int MPU=0x68;         // I2C address of the MPU-6050
 int16_t AcX,AcY,AcZ,GyX,GyY,GyZ;
 
 
-  // SD definition
-  SdFat SD;
-  File  dataFile;
+// SD definition
+SdFat SD;
+File  dataFile;
 
-  void setup()
-  {
-    Wire.begin();
-    Wire.beginTransmission(MPU);
-    Wire.write(0x6B);  // PWR_MGMT_1 register
-    Wire.write(0);     // set to zero (wakes up the MPU-6050)
-    Wire.endTransmission(true);
-    SerialMonitor.begin(9600);
+void setup()
+{
+  Wire.begin();
+  Wire.beginTransmission(MPU);
+  Wire.write(0x6B);  // PWR_MGMT_1 register
+  Wire.write(0);     // set to zero (wakes up the MPU-6050)
+  Wire.endTransmission(true);
+
   gpsPort.begin(GPS_BAUD);
 
+  SerialMonitor.begin(9600);
   SerialMonitor.println( F("Setting up SD card.") );
 
-    updateFileName(); // Each time we start, create a new file, increment the number
-     // see if the card is present and can be initialized:
-     if (!SD.begin(ARDUINO_USD_CS))
-   {
+  // see if the card is present and can be initialized:
+  if (!SD.begin(ARDUINO_USD_CS)) {
     SerialMonitor.println( F("Error initializing SD card.") );
-    } else {
+  } else {
+    updateFileName(); // Each time we start, create a new file, increment the number
     dataFile = SD.open( logFileName, FILE_WRITE );
     // Print a header at the top of the new file
     dataFile.println( F(LOG_COLUMN_HEADER) );
+    if (!dataFile.isOpen())
+      SerialMonitor.println( F("Failed to open GPS dataFile") );
   }
 
-}
+} // setup
 
-  void loop()
-  {
-    Wire.beginTransmission(MPU);
-    Wire.write(0x3B);  // starting with register 0x3B (ACCEL_XOUT_H)
-    Wire.endTransmission(false);
-    Wire.requestFrom(MPU,14,true);   // request a total of 14 registers
-    AcX=Wire.read()<<8;
-    AcX|= Wire.read(); // 0x3B (ACCEL_XOUT_H) & 0x3C (ACCEL_XOUT_L)     
-    AcY=Wire.read()<<8;
-    AcY|=Wire.read();  // 0x3D (ACCEL_YOUT_H) & 0x3E (ACCEL_YOUT_L)
-    AcZ=Wire.read()<<8;
-    AcZ|=Wire.read();  // 0x3F (ACCEL_ZOUT_H) & 0x40 (ACCEL_ZOUT_L)
-    GyX=Wire.read()<<8;
-    GyX|=Wire.read();  // 0x43 (GYRO_XOUT_H) & 0x44 (GYRO_XOUT_L)
-    GyY=Wire.read()<<8 ;
-    GyY|=Wire.read();  // 0x45 (GYRO_YOUT_H) & 0x46 (GYRO_YOUT_L)
-    GyZ=Wire.read()<<8;
-    GyZ|=Wire.read();  // 0x47 (GYRO_ZOUT_H) & 0x48 (GYRO_ZOUT_L)
-  
-  while (gps.available( gpsPort )) {
-    fix = gps.read();  // get the entire fix structure, once per second
 
-   
-    if ((lastLogGPS + LOG_RATE_GPS) <= micros()) {
-        if (logGPSData()) { // Log the GPS data
-    SerialMonitor.println( F("GPS logged.") ); // Print a debug message
-    } else {// If we failed to log GPS
-    // Print an error, don't update lastLog
-    SerialMonitor.println( F("Failed to log new GPS data.") );
-        }
-    lastLogGPS=micros();
-  }
-
-    else{ 
-    if ((lastLog + LOG_RATE) <= micros()) {
-    
-      printImuData(dataFile,lastLog, AcX, AcY, AcZ, GyX, GyY, GyZ);
-      dataFile.flush(); 
-      }
-      lastLog=micros(); 
-     }
-   } 
-  } 
-
-static void printImuData(Print &printer, unsigned long lastLog,
-        int16_t AcX, int16_t AcY, int16_t AcZ,
-        int16_t GyX, int16_t GyY, int16_t GyZ)
-{//Printing the mpu6050 information 
-    
-  printer.print("0");   printer.print(",");   //0 longitude
-  printer.print("0");   printer.print(",");   //0 latitude
-  printer.print("0");   printer.print(",");   //0 altitude
-  printer.print("0");   printer.print(",");   //0 speed
-  printer.print("0");   printer.print(",");   //0 course
-  printer.print("0");   printer.print(",");   //0 date
-  printer.print("0");   printer.print(",");   //0 time 
-  printer.print("0");   printer.print(",");   //0 satellites
-  printer.print(lastLog); printer.print(",");   
-    printer.print(AcX);     printer.print(",");
-    printer.print(AcY);     printer.print(",");
-    printer.print(AcZ);     printer.print(",");
-    printer.print(GyX);     printer.print(",");
-    printer.print(GyY);     printer.print(",");
-    printer.println(GyZ);  
-  
-}
-
-byte logGPSData()
+void loop()
 {
-  if (dataFile.isOpen())
-  { // Print longitude, latitude, altitude (in feet), speed (in mph), course
-    // in (degrees), date, time, and number of satellites.
-
-    if (fix.valid.location)
-      dataFile.print(fix.longitude(), 6);
-    dataFile.print(',');
-    if (fix.valid.location)
-      dataFile.print(fix.latitude(), 6);
-    dataFile.print(',');
-    if (fix.valid.altitude)
-      dataFile.print(fix.altitude() * 3.2808, 1);
-    dataFile.print(',');
-    if (fix.valid.speed)
-      dataFile.print(fix.speed_mph(), 1);
-    dataFile.print(',');
-    if (fix.valid.heading)
-      dataFile.print(fix.heading(), 1);
-    dataFile.print(',');
-
-    if (fix.valid.date) {
-      dataFile.print( fix.dateTime.full_year() );
-      if (fix.dateTime.month < 10)
-        dataFile.print( '0' );
-      dataFile.print( fix.dateTime.month );
-      if (fix.dateTime.date < 10)
-        dataFile.print( '0' );
-      dataFile.print( fix.dateTime.date );
-    }
-    dataFile.print(',');
-
-    if (fix.valid.time) {
-      if (fix.dateTime.hours < 10)
-        dataFile.print( '0' );
-      dataFile.print( fix.dateTime.hours );
-      if (fix.dateTime.minutes < 10)
-        dataFile.print( '0' );
-      dataFile.print( fix.dateTime.minutes );
-      if (fix.dateTime.seconds < 10)
-        dataFile.print( '0' );
-      dataFile.print( fix.dateTime.seconds );
-    }
-    dataFile.print(',');
-
-    if (fix.valid.satellites)
-      dataFile.print(fix.satellites);
-  dataFile.print(',');  
-  dataFile.print(lastLogGPS);  
-    dataFile.print(',');
-    dataFile.print(AcX);
-    dataFile.print(',');
-    dataFile.print(AcY);
-    dataFile.print(',');
-    dataFile.print(AcZ);
-    dataFile.print(',');
-    dataFile.print(GyX);
-    dataFile.print(',');
-    dataFile.print(GyY);
-    dataFile.print(',');
-    dataFile.print(GyZ);
-   
-    dataFile.println();
-    dataFile.flush(); // make sure the file contains at least this much
-
-    return 1; // Return success
+  //  Check for new GPS data
+  if (gps.available( gpsPort )) {
+    fix        = gps.read();  // get the entire fix structure, once per second
+    newGPSdata = true;
   }
 
-  return 0; // If we failed to open the file, return fail
-}
+  // Is it time to take an MPU sample?
+  if ((micros() - lastLog) > LOG_RATE) {
+    lastLog = micros();
+
+    // Yes, read the registers
+    Wire.beginTransmission( MPU );
+    Wire.write( 0x3B );  // starting with register 0x3B (ACCEL_XOUT_H)
+    Wire.endTransmission(false);
+    Wire.requestFrom( MPU, 14, true );   // request a total of 14 registers
+
+    AcX = Wire.read()<<8;
+    AcX|= Wire.read();     // 0x3B (ACCEL_XOUT_H) & 0x3C (ACCEL_XOUT_L)
+    AcY = Wire.read()<<8;
+    AcY|= Wire.read();     // 0x3D (ACCEL_YOUT_H) & 0x3E (ACCEL_YOUT_L)
+    AcZ = Wire.read()<<8;
+    AcZ|= Wire.read();     // 0x3F (ACCEL_ZOUT_H) & 0x40 (ACCEL_ZOUT_L)
+    GyX = Wire.read()<<8;
+    GyX|= Wire.read();     // 0x43 (GYRO_XOUT_H)  & 0x44 (GYRO_XOUT_L)
+    GyY = Wire.read()<<8;
+    GyY|= Wire.read();     // 0x45 (GYRO_YOUT_H)  & 0x46 (GYRO_YOUT_L)
+    GyZ = Wire.read()<<8;
+    GyZ|= Wire.read();     // 0x47 (GYRO_ZOUT_H)  & 0x48 (GYRO_ZOUT_L)
+
+    logGPSData();  //  Write out GPS data first...
+    logMPUdata();  //  ...then write the MPU data.
+
+    //  If we had new GPS data, clear the flag and flush the file
+    if (newGPSdata) {
+      newGPSdata = false;
+      fix     .init (); // empty out the fix structure
+      dataFile.flush(); // checkpoint the SD file once per second
+    }
+  }
+
+} // loop
+
+
+static void logGPSData()
+{
+  // Print longitude, latitude, altitude (in feet), speed (in mph), course
+  // in (degrees), date, time, and number of satellites.
+  //  NOTE:  This only prints commas if the fix is empty (initialized).
+
+  if (fix.valid.location)
+    dataFile.print(fix.longitude(), 6);
+  dataFile.print(',');
+  if (fix.valid.location)
+    dataFile.print(fix.latitude(), 6);
+  dataFile.print(',');
+  if (fix.valid.altitude)
+    dataFile.print(fix.altitude() * 3.2808, 1);
+  dataFile.print(',');
+  if (fix.valid.speed)
+    dataFile.print(fix.speed_mph(), 1);
+  dataFile.print(',');
+  if (fix.valid.heading)
+    dataFile.print(fix.heading(), 1);
+  dataFile.print(',');
+
+  if (fix.valid.date) {
+    dataFile.print( fix.dateTime.full_year() );
+    if (fix.dateTime.month < 10)
+      dataFile.print( '0' );
+    dataFile.print( fix.dateTime.month );
+    if (fix.dateTime.date < 10)
+      dataFile.print( '0' );
+    dataFile.print( fix.dateTime.date );
+  }
+  dataFile.print(',');
+
+  if (fix.valid.time) {
+    if (fix.dateTime.hours < 10)
+      dataFile.print( '0' );
+    dataFile.print( fix.dateTime.hours );
+    if (fix.dateTime.minutes < 10)
+      dataFile.print( '0' );
+    dataFile.print( fix.dateTime.minutes );
+    if (fix.dateTime.seconds < 10)
+      dataFile.print( '0' );
+    dataFile.print( fix.dateTime.seconds );
+  }
+  dataFile.print(',');
+
+  if (fix.valid.satellites)
+    dataFile.print(fix.satellites);
+
+  dataFile.print(',');
+
+} // logGPSData
+
+
+static void logMPUdata()
+{
+  //Printing the mpu6050 information
+  dataFile.print  (lastLog); dataFile.print(',');
+  dataFile.print  (AcX);     dataFile.print(',');
+  dataFile.print  (AcY);     dataFile.print(',');
+  dataFile.print  (AcZ);     dataFile.print(',');
+  dataFile.print  (GyX);     dataFile.print(',');
+  dataFile.print  (GyY);     dataFile.print(',');
+  dataFile.println(GyZ);
+
+} // logMPUdata
+
 
 // updateFileName() - Looks through the log files already present on a card,
 // and creates a new file with an incremented file index.
@@ -219,7 +191,7 @@ void updateFileName()
     // Set logFileName to "gpslogXX.csv":
     logFileName[6] = (i/10) + '0';
     logFileName[7] = (i%10) + '0';
- if (!SD.exists(logFileName))
+    if (!SD.exists(logFileName))
       break; // We found our index
 
     SerialMonitor.print(logFileName);
@@ -227,5 +199,5 @@ void updateFileName()
   }
   SerialMonitor.print( F("File name: ") );
   SerialMonitor.println(logFileName);
-}
 
+} 
